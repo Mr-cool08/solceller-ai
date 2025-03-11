@@ -4,6 +4,10 @@ import joblib
 from datetime import datetime, timedelta
 import requests
 from train_model import SolarNet
+import os
+import json
+
+MODEL_DIR = 'models'
 
 def get_radiation_forecast(lat=61.7273, lon=17.1066):
     """Get UV index forecast from OpenMeteo"""
@@ -221,20 +225,85 @@ def get_smhi_forecast(lat=61.7273, lon=17.1066):
         print("Request URL:", base_url)
     return None
 
+def get_model_versions():
+    """Get all available model versions"""
+    version_file = os.path.join(MODEL_DIR, 'model_versions.json')
+    try:
+        with open(version_file, 'r') as f:
+            versions = json.load(f)
+        return versions
+    except FileNotFoundError:
+        return None
+
+def select_model_version():
+    """Interactive model version selection"""
+    versions = get_model_versions()
+    if not versions:
+        print("No trained models found")
+        return None
+        
+    print("\nAvailable model versions:")
+    for v in sorted(versions, key=lambda x: x['version']):
+        print(f"\nVersion {v['version']} - {v['timestamp']}")
+        print(f"MAE: {v['mae']:.2f} kWh")
+        print(f"RMSE: {v['rmse']:.2f} kWh")
+        print(f"Validation Loss: {v['val_loss']:.4f}")
+    
+    while True:
+        try:
+            choice = input("\nSelect model version (or press Enter for latest): ").strip()
+            if not choice:  # Empty input - use latest
+                return max(versions, key=lambda x: x['version'])
+            
+            version_num = int(choice)
+            selected = next((v for v in versions if v['version'] == version_num), None)
+            if selected:
+                return selected
+            print(f"Version {version_num} not found")
+        except ValueError:
+            print("Please enter a valid version number")
+
+def get_latest_model_version():
+    """Get the latest model version from model_versions.json"""
+    version_file = os.path.join(MODEL_DIR, 'model_versions.json')
+    try:
+        with open(version_file, 'r') as f:
+            versions = json.load(f)
+        if versions:
+            latest = max(versions, key=lambda x: x['version'])
+            return latest
+        return None
+    except FileNotFoundError:
+        return None
+
 def predict_solar_output():
-    # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
+    
     try:
+        # Get user-selected model version
+        version = select_model_version()
+        if version is None:
+            raise FileNotFoundError("No trained models found")
+            
+        print(f"\nUsing model version {version['version']}:")
+        print(f"MAE: {version['mae']:.2f} kWh")
+        print(f"RMSE: {version['rmse']:.2f} kWh")
+        
+        # Load model and scalers using version paths
+        model_path = os.path.join(MODEL_DIR, version['model_file'])
+        feature_scaler_path = os.path.join(MODEL_DIR, version['feature_scaler'])
+        target_scaler_path = os.path.join(MODEL_DIR, version['target_scaler'])
+        
         # Load the trained model
-        checkpoint = torch.load('solar_prediction_model.pth', map_location=device)
+        checkpoint = torch.load(model_path, map_location=device)
         model = SolarNet(checkpoint['input_size']).to(device)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         
         # Load the scalers
-        feature_scaler = joblib.load('feature_scaler.joblib')
-        target_scaler = joblib.load('target_scaler.joblib')
+        feature_scaler = joblib.load(feature_scaler_path)
+        target_scaler = joblib.load(target_scaler_path)
         
         # Get weather forecast from SMHI
         weather_data = get_smhi_forecast()

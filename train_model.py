@@ -10,6 +10,31 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import math
 import json
 from datetime import datetime
+import joblib  # Add this import
+import os
+
+# Add these constants at the top after imports
+MODEL_DIR = 'models'
+TRAINING_DIR = 'training_artifacts'
+
+# Create directories if they don't exist
+os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(TRAINING_DIR, exist_ok=True)
+
+# Add numpy safety function
+def numpy_to_python(obj):
+    """Convert numpy types to native Python types"""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {k: numpy_to_python(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [numpy_to_python(item) for item in obj]
+    return obj
 
 class SolarDataset(Dataset):
     def __init__(self, X, y):
@@ -194,7 +219,13 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             # Check if we've met our target
             if val_loss <= target_val_loss:
                 print(f"\nTarget validation loss {target_val_loss} achieved!")
-                return best_model, train_losses, val_losses
+                return {
+                    'model_state': best_model,
+                    'train_losses': train_losses,
+                    'val_losses': val_losses,
+                    'final_train_loss': train_loss,
+                    'best_val_loss': best_val_loss
+                }
             
             # Check if we're stuck
             if no_improvement_epochs >= 100:  # No improvement in 100 epochs
@@ -216,7 +247,13 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         print(f"Best overall validation loss so far: {best_overall_loss:.6f}")
     
     print("\nMax restarts reached. Using best model found.")
-    return best_overall_model, train_losses, val_losses
+    return {
+        'model_state': best_overall_model,
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'final_train_loss': train_loss,
+        'best_val_loss': best_overall_loss
+    }
 
 def calculate_feature_importance(model, X_train, feature_names, device):
     model.eval()
@@ -248,20 +285,29 @@ def calculate_feature_importance(model, X_train, feature_names, device):
 
 def save_model_version(model_metrics, version_file='model_versions.json'):
     """Save model version with performance metrics"""
+    version_file = os.path.join(MODEL_DIR, version_file)
     try:
         with open(version_file, 'r') as f:
             versions = json.load(f)
     except FileNotFoundError:
         versions = []
     
+    # Convert numpy types to native Python types
+    metrics = {
+        'mae': float(model_metrics['mae']),
+        'rmse': float(model_metrics['rmse']),
+        'val_loss': float(model_metrics['val_loss']),
+        'train_loss': float(model_metrics['train_loss'])
+    }
+    
     # Create new version entry
     version = {
         'version': len(versions) + 1,
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'mae': model_metrics['mae'],
-        'rmse': model_metrics['rmse'],
-        'val_loss': model_metrics['val_loss'],
-        'train_loss': model_metrics['train_loss'],
+        'mae': metrics['mae'],
+        'rmse': metrics['rmse'],
+        'val_loss': metrics['val_loss'],
+        'train_loss': metrics['train_loss'],
         'model_file': f'solar_prediction_model_v{len(versions) + 1}.pth',
         'feature_scaler': f'feature_scaler_v{len(versions) + 1}.joblib',
         'target_scaler': f'target_scaler_v{len(versions) + 1}.joblib'
@@ -317,13 +363,15 @@ def train_and_evaluate():
                                 patience=35, verbose=True, min_lr=1e-6)
     
     # More demanding target
-    best_model_state, train_losses, val_losses = train_model(
+    training_results = train_model(
         model, train_loader, val_loader, criterion, optimizer, scheduler,
         num_epochs=50000, device=device, target_val_loss=0.006, max_restarts=5
     )
     
     # Load best model
-    model.load_state_dict(best_model_state)
+    model.load_state_dict(training_results['model_state'])
+    train_losses = training_results['train_losses']
+    val_losses = training_results['val_losses']
     
     # Evaluate on test set
     model.eval()
@@ -354,7 +402,7 @@ def train_and_evaluate():
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig('training_history.png')
+    plt.savefig(os.path.join(TRAINING_DIR, 'training_history.png'))
     plt.close()
     
     # Plot actual vs predicted values
@@ -364,15 +412,15 @@ def train_and_evaluate():
     plt.xlabel('Actual Energy Production (kWh)')
     plt.ylabel('Predicted Energy Production (kWh)')
     plt.title('Actual vs Predicted Solar Energy Production')
-    plt.savefig('prediction_scatter.png')
+    plt.savefig(os.path.join(TRAINING_DIR, 'prediction_scatter.png'))
     plt.close()
     
-    # Calculate metrics
+    # Calculate metrics with correct loss values
     metrics = {
         'mae': mae,
         'rmse': rmse,
-        'val_loss': best_val_loss,
-        'train_loss': train_loss
+        'val_loss': training_results['best_val_loss'],
+        'train_loss': training_results['final_train_loss']
     }
     
     # Save version information
@@ -383,18 +431,18 @@ def train_and_evaluate():
     print(f"Validation Loss: {version['val_loss']:.4f}")
     print(f"Training Loss: {version['train_loss']:.4f}")
     
-    # Save model with version number
+    # Save model with version number and convert numpy types
+    model_path = os.path.join(MODEL_DIR, version['model_file'])
     torch.save({
-        'model_state_dict': best_model_state,
-        'input_size': X_train.shape[1],
+        'model_state_dict': training_results['model_state'],
+        'input_size': int(X_train.shape[1]),
         'feature_names': feature_names,
         'version': version['version'],
-        'metrics': metrics
-    }, version['model_file'])
+        'metrics': numpy_to_python(metrics)  # Convert numpy types to Python types
+    }, model_path)
     
-    # Save scalers with version number
-    joblib.dump(scaler, version['feature_scaler'])
-    joblib.dump(y_scaler, version['target_scaler'])
+    joblib.dump(scaler, os.path.join(MODEL_DIR, version['feature_scaler']))
+    joblib.dump(y_scaler, os.path.join(MODEL_DIR, version['target_scaler']))
     
     # Calculate feature importance
     feature_importance = calculate_feature_importance(model, X_train_scaled, feature_names, device)
@@ -407,7 +455,7 @@ def train_and_evaluate():
     plt.xticks(rotation=45)
     plt.title('Feature Importance')
     plt.tight_layout()
-    plt.savefig('feature_importance.png')
+    plt.savefig(os.path.join(TRAINING_DIR, 'feature_importance.png'))
     plt.close()
     
     return model, scaler, y_scaler

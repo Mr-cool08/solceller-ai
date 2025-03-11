@@ -1,0 +1,35 @@
+[
+    {
+        "version": 1,
+        "timestamp": "2025-03-11 22:35:16",
+        "mae": 8.526104927062988,
+        "rmse": 11.626876831054688,
+        "val_loss": 0.005608009174466133,
+        "train_loss": 0.011789796563486258,
+        "model_file": "solar_prediction_model_v1.pth",
+        "feature_scaler": "feature_scaler_v1.joblib",
+        "target_scaler": "target_scaler_v1.joblib"
+    },
+    {
+        "version": 2,
+        "timestamp": "2025-03-11 22:36:33",
+        "mae": 8.586567878723145,
+        "rmse": 11.552063941955566,
+        "val_loss": 0.005933200474828482,
+        "train_loss": 0.009953916538506746,
+        "model_file": "solar_prediction_model_v2.pth",
+        "feature_scaler": "feature_scaler_v2.joblib",
+        "target_scaler": "target_scaler_v2.joblib"
+    },
+    {
+        "version": 3,
+        "timestamp": "2025-03-11 22:36:53",
+        "mae": 8.104083061218262,
+        "rmse": 10.683380126953125,
+        "val_loss": 0.006241476628929377,
+        "train_loss": 0.008096092070142428,
+        "model_file": "solar_prediction_model_v3.pth",
+        "feature_scaler": "feature_scaler_v3.joblib",
+        "target_scaler": "target_scaler_v3.joblib"
+    }
+]
