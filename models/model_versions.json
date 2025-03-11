@@ -97,5 +97,27 @@
         "model_file": "solar_prediction_model_v9.pth",
         "feature_scaler": "feature_scaler_v9.joblib",
         "target_scaler": "target_scaler_v9.joblib"
+    },
+    {
+        "version": 10,
+        "timestamp": "2025-03-11 22:53:37",
+        "mae": 7.898213863372803,
+        "rmse": 10.967293739318848,
+        "val_loss": 0.004767307545989752,
+        "train_loss": 0.006698740568632881,
+        "model_file": "solar_prediction_model_v10.pth",
+        "feature_scaler": "feature_scaler_v10.joblib",
+        "target_scaler": "target_scaler_v10.joblib"
+    },
+    {
+        "version": 11,
+        "timestamp": "2025-03-11 22:59:40",
+        "mae": 7.007365703582764,
+        "rmse": 10.34969711303711,
+        "val_loss": 0.0065648783929646015,
+        "train_loss": 0.0046892900330324965,
+        "model_file": "solar_prediction_model_v11.pth",
+        "feature_scaler": "feature_scaler_v11.joblib",
+        "target_scaler": "target_scaler_v11.joblib"
     }
 ]

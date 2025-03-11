@@ -135,6 +135,7 @@ def load_data(file_path='processed_data/combined_solar_weather_data.csv'):
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, target_val_loss=0.01, max_restarts=500):
     best_overall_loss = float('inf')
+    best_overall_diff = float('inf')  # Track loss difference
     best_overall_model = None
     restarts = 0
     
@@ -146,11 +147,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             print("Reinitializing model with new random weights...")
             model = SolarNet(model.fc1.in_features).to(device)
             optimizer = torch.optim.AdamW(model.parameters(), lr=0.0005, weight_decay=0.01)
-            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=15, verbose=True, min_lr=1e-6)
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=500, verbose=True, min_lr=1e-6)
         
         train_losses = []
         val_losses = []
         best_val_loss = float('inf')
+        best_loss_diff = float('inf')
         best_model = None
         patience = 1000
         patience_counter = 0
@@ -191,6 +193,9 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             train_loss /= len(train_loader)
             val_loss /= len(val_loader)
             
+            # Calculate loss difference
+            loss_diff = abs(train_loss - val_loss)
+            
             # Skip if loss is NaN
             if math.isnan(train_loss) or math.isnan(val_loss):
                 print(f"NaN loss detected in epoch {epoch+1}, skipping...")
@@ -199,10 +204,11 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             train_losses.append(train_loss)
             val_losses.append(val_loss)
             
-            # Print progress
+            # Print progress with loss difference
             print(f'Epoch {epoch+1}/{num_epochs}:')
             print(f'Training Loss: {train_loss:.4f}')
             print(f'Validation Loss: {val_loss:.4f}')
+            print(f'Loss Difference: {loss_diff:.4f}')
             
             # Learning rate scheduling
             scheduler.step(val_loss)
@@ -210,6 +216,14 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             # Modified early stopping logic
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                best_loss_diff = loss_diff
+                best_model = model.state_dict().copy()
+                patience_counter = 0
+                no_improvement_epochs = 0
+            elif loss_diff < best_loss_diff and val_loss < best_val_loss * 1.1:
+                # Accept slightly worse val_loss if loss difference improves significantly
+                best_val_loss = val_loss
+                best_loss_diff = loss_diff
                 best_model = model.state_dict().copy()
                 patience_counter = 0
                 no_improvement_epochs = 0
@@ -217,15 +231,16 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 patience_counter += 1
                 no_improvement_epochs += 1
             
-            # Check if we've met our target
-            if val_loss <= target_val_loss:
-                print(f"\nTarget validation loss {target_val_loss} achieved!")
+            # Check if we've met both targets
+            if val_loss <= target_val_loss and loss_diff <= 0.001:  # Target 0.1% difference
+                print(f"\nBoth targets achieved! Val Loss: {val_loss:.4f}, Diff: {loss_diff:.4f}")
                 return {
                     'model_state': best_model,
                     'train_losses': train_losses,
                     'val_losses': val_losses,
                     'final_train_loss': train_loss,
-                    'best_val_loss': best_val_loss
+                    'best_val_loss': best_val_loss,
+                    'best_loss_diff': best_loss_diff
                 }
             
             # Check if we're stuck
@@ -238,14 +253,17 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 print(f"Early stopping triggered after {epoch+1} epochs")
                 break
         
-        # Update best overall model if this attempt was better
-        if best_val_loss < best_overall_loss:
+        # Update best overall model considering both metrics
+        current_score = best_val_loss + best_loss_diff  # Combined score
+        best_score = best_overall_loss + best_overall_diff
+        if current_score < best_score:
             best_overall_loss = best_val_loss
+            best_overall_diff = best_loss_diff
             best_overall_model = best_model
         
         restarts += 1
         print(f"Best validation loss this attempt: {best_val_loss:.6f}")
-        print(f"Best overall validation loss so far: {best_overall_loss:.6f}")
+        print(f"Best loss difference this attempt: {best_loss_diff:.6f}")
     
     print("\nMax restarts reached. Using best model found.")
     return {
@@ -253,7 +271,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         'train_losses': train_losses,
         'val_losses': val_losses,
         'final_train_loss': train_loss,
-        'best_val_loss': best_overall_loss
+        'best_val_loss': best_overall_loss,
+        'best_loss_diff': best_overall_diff
     }
 
 def calculate_feature_importance(model, X_train, feature_names, device):
@@ -358,32 +377,31 @@ def train_and_evaluate():
     # Define loss function and optimizer with weight decay
     criterion = nn.MSELoss()
     
-    # Improved optimization parameters
+    # Adjusted optimization parameters for balanced training
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=0.0008,  # Slightly lower learning rate
-        weight_decay=0.0015,  # Increased regularization
-        betas=(0.9, 0.999),  # Default betas work well
+        lr=0.0006,  # Lower learning rate for stability
+        weight_decay=0.002,  # Increased regularization
+        betas=(0.9, 0.99),  # Modified beta2 for better momentum
         eps=1e-8
     )
     
-    # More gradual learning rate decay
     scheduler = ReduceLROnPlateau(
         optimizer,
         mode='min',
-        factor=0.9,  # More gradual reduction
-        patience=40,  # More patience
+        factor=0.95,  # Very gradual reduction
+        patience=500,  # More patience
         verbose=True,
-        min_lr=1e-7  # Lower minimum learning rate
+        min_lr=1e-7
     )
     
-    # More demanding target with increased restarts
+    # Training with focus on loss difference
     training_results = train_model(
         model, train_loader, val_loader, criterion, optimizer, scheduler,
         num_epochs=50000,
         device=device,
-        target_val_loss=0.005,  # More ambitious target
-        max_restarts=8  # More attempts to find better initialization
+        target_val_loss=0.005,
+        max_restarts=20
     )
     
     # Load best model
