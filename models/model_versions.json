@@ -42,5 +42,16 @@
         "model_file": "solar_prediction_model_v4.pth",
         "feature_scaler": "feature_scaler_v4.joblib",
         "target_scaler": "target_scaler_v4.joblib"
+    },
+    {
+        "version": 5,
+        "timestamp": "2025-03-11 22:39:42",
+        "mae": 7.941965579986572,
+        "rmse": 11.592673301696777,
+        "val_loss": 0.006219256669282913,
+        "train_loss": 0.010386522548894087,
+        "model_file": "solar_prediction_model_v5.pth",
+        "feature_scaler": "feature_scaler_v5.joblib",
+        "target_scaler": "target_scaler_v5.joblib"
     }
 ]
