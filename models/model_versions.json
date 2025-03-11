@@ -53,5 +53,49 @@
         "model_file": "solar_prediction_model_v5.pth",
         "feature_scaler": "feature_scaler_v5.joblib",
         "target_scaler": "target_scaler_v5.joblib"
+    },
+    {
+        "version": 6,
+        "timestamp": "2025-03-11 22:45:09",
+        "mae": 7.748086452484131,
+        "rmse": 11.083897590637207,
+        "val_loss": 0.005980521906167269,
+        "train_loss": 0.008204245008528233,
+        "model_file": "solar_prediction_model_v6.pth",
+        "feature_scaler": "feature_scaler_v6.joblib",
+        "target_scaler": "target_scaler_v6.joblib"
+    },
+    {
+        "version": 7,
+        "timestamp": "2025-03-11 22:45:30",
+        "mae": 7.312595367431641,
+        "rmse": 10.300410270690918,
+        "val_loss": 0.006127587985247374,
+        "train_loss": 0.00678083929233253,
+        "model_file": "solar_prediction_model_v7.pth",
+        "feature_scaler": "feature_scaler_v7.joblib",
+        "target_scaler": "target_scaler_v7.joblib"
+    },
+    {
+        "version": 8,
+        "timestamp": "2025-03-11 22:47:30",
+        "mae": 7.6810126304626465,
+        "rmse": 10.587368965148926,
+        "val_loss": 0.006190375424921513,
+        "train_loss": 0.007131996875007947,
+        "model_file": "solar_prediction_model_v8.pth",
+        "feature_scaler": "feature_scaler_v8.joblib",
+        "target_scaler": "target_scaler_v8.joblib"
+    },
+    {
+        "version": 9,
+        "timestamp": "2025-03-11 22:48:29",
+        "mae": 7.259664058685303,
+        "rmse": 9.953418731689453,
+        "val_loss": 0.00537970382720232,
+        "train_loss": 0.006112223180631797,
+        "model_file": "solar_prediction_model_v9.pth",
+        "feature_scaler": "feature_scaler_v9.joblib",
+        "target_scaler": "target_scaler_v9.joblib"
     }
 ]

@@ -50,35 +50,36 @@ class SolarDataset(Dataset):
 class SolarNet(nn.Module):
     def __init__(self, input_size):
         super(SolarNet, self).__init__()
-        # Feature attention mechanism
+        # Increase network capacity for more complex patterns
         self.attention = nn.Linear(input_size, input_size)
         
-        # Main network
-        self.fc1 = nn.Linear(input_size, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 32)
-        self.fc4 = nn.Linear(32, 1)
+        # Wider network with better gradients
+        self.fc1 = nn.Linear(input_size, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
+        self.fc4 = nn.Linear(64, 1)
         
-        self.dropout = nn.Dropout(0.1)
-        self.relu = nn.LeakyReLU(0.1)
+        # Adjust dropout for better regularization
+        self.dropout = nn.Dropout(0.15)  # Slightly increased
+        self.relu = nn.LeakyReLU(0.05)  # Reduced slope for smoother gradients
         self.norm1 = nn.InstanceNorm1d(num_features=None)
         self.norm2 = nn.InstanceNorm1d(num_features=None)
         self.norm3 = nn.InstanceNorm1d(num_features=None)
         
-        # Special processing for most important features
+        # Enhanced feature processing
         self.daylight_proc = nn.Sequential(
-            nn.Linear(1, 16),
-            nn.LeakyReLU(0.1),
-            nn.Linear(16, 16)
+            nn.Linear(1, 32),  # Increased width
+            nn.LeakyReLU(0.05),
+            nn.Linear(32, 32)
         )
         self.radiation_proc = nn.Sequential(
-            nn.Linear(1, 16),
-            nn.LeakyReLU(0.1),
-            nn.Linear(16, 16)
+            nn.Linear(1, 32),  # Increased width
+            nn.LeakyReLU(0.05),
+            nn.Linear(32, 32)
         )
         
-        self.skip1 = nn.Linear(input_size + 32, 64)  # Increased for feature processing
-        self.skip2 = nn.Linear(64, 32)
+        self.skip1 = nn.Linear(input_size + 64, 128)
+        self.skip2 = nn.Linear(128, 64)
     
     def forward(self, x, eval_mode=False):
         # Apply attention to input features
@@ -357,15 +358,32 @@ def train_and_evaluate():
     # Define loss function and optimizer with weight decay
     criterion = nn.MSELoss()
     
-    # Adjusted optimization parameters
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.001)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.85, 
-                                patience=35, verbose=True, min_lr=1e-6)
+    # Improved optimization parameters
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=0.0008,  # Slightly lower learning rate
+        weight_decay=0.0015,  # Increased regularization
+        betas=(0.9, 0.999),  # Default betas work well
+        eps=1e-8
+    )
     
-    # More demanding target
+    # More gradual learning rate decay
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.9,  # More gradual reduction
+        patience=40,  # More patience
+        verbose=True,
+        min_lr=1e-7  # Lower minimum learning rate
+    )
+    
+    # More demanding target with increased restarts
     training_results = train_model(
         model, train_loader, val_loader, criterion, optimizer, scheduler,
-        num_epochs=50000, device=device, target_val_loss=0.006, max_restarts=5
+        num_epochs=50000,
+        device=device,
+        target_val_loss=0.005,  # More ambitious target
+        max_restarts=8  # More attempts to find better initialization
     )
     
     # Load best model
