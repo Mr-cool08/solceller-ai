@@ -61,9 +61,9 @@ class SolarNet(nn.Module):
         
         self.dropout = nn.Dropout(0.1)
         self.relu = nn.LeakyReLU(0.1)
-        self.norm1 = nn.InstanceNorm1d(128, affine=False)
-        self.norm2 = nn.InstanceNorm1d(64, affine=False)
-        self.norm3 = nn.InstanceNorm1d(32, affine=False)
+        self.norm1 = nn.InstanceNorm1d(num_features=None)
+        self.norm2 = nn.InstanceNorm1d(num_features=None)
+        self.norm3 = nn.InstanceNorm1d(num_features=None)
         
         # Special processing for most important features
         self.daylight_proc = nn.Sequential(
