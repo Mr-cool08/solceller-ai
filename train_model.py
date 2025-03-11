@@ -8,6 +8,8 @@ from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import math
+import json
+from datetime import datetime
 
 class SolarDataset(Dataset):
     def __init__(self, X, y):
@@ -244,6 +246,35 @@ def calculate_feature_importance(model, X_train, feature_names, device):
     
     return feature_importance
 
+def save_model_version(model_metrics, version_file='model_versions.json'):
+    """Save model version with performance metrics"""
+    try:
+        with open(version_file, 'r') as f:
+            versions = json.load(f)
+    except FileNotFoundError:
+        versions = []
+    
+    # Create new version entry
+    version = {
+        'version': len(versions) + 1,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'mae': model_metrics['mae'],
+        'rmse': model_metrics['rmse'],
+        'val_loss': model_metrics['val_loss'],
+        'train_loss': model_metrics['train_loss'],
+        'model_file': f'solar_prediction_model_v{len(versions) + 1}.pth',
+        'feature_scaler': f'feature_scaler_v{len(versions) + 1}.joblib',
+        'target_scaler': f'target_scaler_v{len(versions) + 1}.joblib'
+    }
+    
+    versions.append(version)
+    
+    # Save version history
+    with open(version_file, 'w') as f:
+        json.dump(versions, f, indent=4)
+    
+    return version
+
 def train_and_evaluate():
     # Set device (GPU if available, else CPU)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -336,15 +367,34 @@ def train_and_evaluate():
     plt.savefig('prediction_scatter.png')
     plt.close()
     
-    # Save the model and scalers
+    # Calculate metrics
+    metrics = {
+        'mae': mae,
+        'rmse': rmse,
+        'val_loss': best_val_loss,
+        'train_loss': train_loss
+    }
+    
+    # Save version information
+    version = save_model_version(metrics)
+    print(f"\nSaving model version {version['version']}:")
+    print(f"MAE: {version['mae']:.2f} kWh")
+    print(f"RMSE: {version['rmse']:.2f} kWh")
+    print(f"Validation Loss: {version['val_loss']:.4f}")
+    print(f"Training Loss: {version['train_loss']:.4f}")
+    
+    # Save model with version number
     torch.save({
         'model_state_dict': best_model_state,
         'input_size': X_train.shape[1],
-        'feature_names': feature_names
-    }, 'solar_prediction_model.pth')
-    import joblib
-    joblib.dump(scaler, 'feature_scaler.joblib')
-    joblib.dump(y_scaler, 'target_scaler.joblib')
+        'feature_names': feature_names,
+        'version': version['version'],
+        'metrics': metrics
+    }, version['model_file'])
+    
+    # Save scalers with version number
+    joblib.dump(scaler, version['feature_scaler'])
+    joblib.dump(y_scaler, version['target_scaler'])
     
     # Calculate feature importance
     feature_importance = calculate_feature_importance(model, X_train_scaled, feature_names, device)
