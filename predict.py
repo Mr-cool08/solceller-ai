@@ -3,11 +3,31 @@ import numpy as np
 import joblib
 from datetime import datetime, timedelta
 import requests
-from train_model import SolarNet
+import torch.nn as nn
 import os
 import json
 
 MODEL_DIR = 'models'
+
+class SolarNet(nn.Module):
+    def __init__(self, input_size):
+        super(SolarNet, self).__init__()
+        # Basic architecture
+        self.fc1 = nn.Linear(input_size, 128)
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, 32)
+        self.fc4 = nn.Linear(32, 1)
+        self.dropout = nn.Dropout(0.2)
+        self.relu = nn.ReLU()
+    
+    def forward(self, x, eval_mode=False):
+        x = self.relu(self.fc1(x))
+        x = self.dropout(x) if not eval_mode else x
+        x = self.relu(self.fc2(x))
+        x = self.dropout(x) if not eval_mode else x
+        x = self.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
 
 def get_radiation_forecast(lat=61.7273, lon=17.1066):
     """Get UV index forecast from OpenMeteo"""
@@ -143,19 +163,20 @@ def get_smhi_forecast(lat=61.7273, lon=17.1066):
                                 else:
                                     weather_data['rain'] += value
                         elif param_name == 'tcc_mean':  # Total cloud cover (Parameter 16)
-                            # SMHI reports this as hourly momentary values in percent
+                            # SMHI reports this as 0-100%, invert it since higher cloud cover means less sun
+                            value = 100 - value  # Invert the value
                             hour = forecast_time.hour
                             # Only count daylight hours (6:00-18:00) with higher weight
                             if 6 <= hour <= 18:
                                 weight = 2.0
                                 weather_data['cloud_cover_sum'] += value * weight
                                 weather_data['cloud_cover_count'] += weight
-                                print(f"Cloud cover at {forecast_time.strftime('%H:%M')}: {value}% (weighted)")
+                                print(f"Cloud cover at {forecast_time.strftime('%H:%M')}: {value}% clear sky (weighted)")
                             else:
                                 # Still track nighttime for completeness but with lower weight
                                 weather_data['cloud_cover_sum'] += value
                                 weather_data['cloud_cover_count'] += 1
-                                print(f"Cloud cover at {forecast_time.strftime('%H:%M')}: {value}%")
+                                print(f"Cloud cover at {forecast_time.strftime('%H:%M')}: {value}% clear sky")
                         elif param_name == 'wsymb':  # Weather symbol (for precipitation type)
                             # SMHI wsymb categories for snow: 12,13,14,15,16,17,18,19
                             if value in [12,13,14,15,16,17,18,19]:  # Snow or Snow+Rain
@@ -170,7 +191,7 @@ def get_smhi_forecast(lat=61.7273, lon=17.1066):
             if weather_data['max_temp'] == float('-inf'):
                 print("No temperature data available in SMHI forecast")
                 return None
-                
+            
             # Ensure we have both max and min temperatures
             if weather_data['min_temp'] == float('inf'):
                 weather_data['min_temp'] = weather_data['max_temp']
@@ -178,7 +199,7 @@ def get_smhi_forecast(lat=61.7273, lon=17.1066):
             # Calculate weighted average cloud cover
             if weather_data['cloud_cover_count'] > 0:
                 cloud_cover = weather_data['cloud_cover_sum'] / weather_data['cloud_cover_count']
-                print(f"\nWeighted average cloud cover: {cloud_cover:.1f}% (weighted more heavily during daylight hours)")
+                print(f"\nWeighted average clear sky: {cloud_cover:.1f}% (weighted more heavily during daylight hours)")
             else:
                 cloud_cover = 0
                 print("\nWarning: No cloud cover data available")
@@ -205,7 +226,6 @@ def get_smhi_forecast(lat=61.7273, lon=17.1066):
             print("\nData collection summary:")
             print(f"Cloud cover readings: {weather_data['cloud_cover_count']}")
             print(f"Available parameters: {sorted(parameter_names)}")
-            
             return [
                 weather_data['max_temp'],
                 weather_data['min_temp'],
@@ -213,16 +233,13 @@ def get_smhi_forecast(lat=61.7273, lon=17.1066):
                 weather_data['rain'],
                 weather_data['snow'],
                 min(100, max(0, cloud_cover)),  # Ensure cloud cover is between 0-100%
-                radiation_proxy,  # Using scaled UV index as radiation proxy
-                daylight_hours if daylight_hours is not None else 12  # Default to 12 hours if no data
+                radiation_proxy  # Using scaled UV index as radiation proxy
+                # Removed daylight_hours since model wasn't trained with it
             ]
-            
     except requests.exceptions.RequestException as e:
         print(f"Network error fetching SMHI forecast: {str(e)}")
-        print("Request URL:", base_url)
     except Exception as e:
         print(f"Error processing SMHI forecast data: {str(e)}")
-        print("Request URL:", base_url)
     return None
 
 def get_model_versions():
@@ -248,7 +265,7 @@ def select_model_version():
         print(f"MAE: {v['mae']:.2f} kWh")
         print(f"RMSE: {v['rmse']:.2f} kWh")
         print(f"Validation Loss: {v['val_loss']:.4f}")
-    
+        
     while True:
         try:
             choice = input("\nSelect model version (or press Enter for latest): ").strip()

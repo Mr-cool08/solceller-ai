@@ -8,33 +8,13 @@ from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import math
+import os
 import json
 from datetime import datetime
-import joblib  # Add this import
-import os
+import joblib
 
-# Add these constants at the top after imports
 MODEL_DIR = 'models'
-TRAINING_DIR = 'training_artifacts'
-
-# Create directories if they don't exist
 os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(TRAINING_DIR, exist_ok=True)
-
-# Add numpy safety function
-def numpy_to_python(obj):
-    """Convert numpy types to native Python types"""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, dict):
-        return {k: numpy_to_python(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [numpy_to_python(item) for item in obj]
-    return obj
 
 class SolarDataset(Dataset):
     def __init__(self, X, y):
@@ -50,69 +30,20 @@ class SolarDataset(Dataset):
 class SolarNet(nn.Module):
     def __init__(self, input_size):
         super(SolarNet, self).__init__()
-        # Increase network capacity for more complex patterns
-        self.attention = nn.Linear(input_size, input_size)
-        
-        # Wider network with better gradients
-        self.fc1 = nn.Linear(input_size, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 64)
-        self.fc4 = nn.Linear(64, 1)
-        
-        # Adjust dropout for better regularization
-        self.dropout = nn.Dropout(0.15)  # Slightly increased
-        self.relu = nn.LeakyReLU(0.05)  # Reduced slope for smoother gradients
-        self.norm1 = nn.InstanceNorm1d(num_features=None)
-        self.norm2 = nn.InstanceNorm1d(num_features=None)
-        self.norm3 = nn.InstanceNorm1d(num_features=None)
-        
-        # Enhanced feature processing
-        self.daylight_proc = nn.Sequential(
-            nn.Linear(1, 32),  # Increased width
-            nn.LeakyReLU(0.05),
-            nn.Linear(32, 32)
-        )
-        self.radiation_proc = nn.Sequential(
-            nn.Linear(1, 32),  # Increased width
-            nn.LeakyReLU(0.05),
-            nn.Linear(32, 32)
-        )
-        
-        self.skip1 = nn.Linear(input_size + 64, 128)
-        self.skip2 = nn.Linear(128, 64)
+        # Basic architecture
+        self.fc1 = nn.Linear(input_size, 128)
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, 32)
+        self.fc4 = nn.Linear(32, 1)
+        self.dropout = nn.Dropout(0.2)
+        self.relu = nn.ReLU()
     
     def forward(self, x, eval_mode=False):
-        # Apply attention to input features
-        attention = torch.sigmoid(self.attention(x))
-        x = x * attention
-        
-        # Special processing for important features
-        daylight = self.daylight_proc(x[:, 7:8])  # daylight_hours
-        radiation = self.radiation_proc(x[:, 6:7])  # solar_radiation
-        
-        # Main network path
-        identity1 = self.skip1(torch.cat([x, daylight, radiation], dim=1))
-        x = self.fc1(x)
-        x = self.norm1(x.unsqueeze(1)).squeeze(1)
-        x = self.relu(x)
-        if not eval_mode:
-            x = self.dropout(x)
-        x = self.fc2(x)
-        x = x + identity1
-        
-        # Rest of the network
-        identity2 = self.skip2(x)
-        x = self.norm2(x.unsqueeze(1)).squeeze(1)
-        x = self.relu(x)
-        if not eval_mode:
-            x = self.dropout(x)
-        x = self.fc3(x)
-        x = x + identity2
-        
-        x = self.norm3(x.unsqueeze(1)).squeeze(1)
-        x = self.relu(x)
-        if not eval_mode:
-            x = self.dropout(x)
+        x = self.relu(self.fc1(x))
+        x = self.dropout(x) if not eval_mode else x
+        x = self.relu(self.fc2(x))
+        x = self.dropout(x) if not eval_mode else x
+        x = self.relu(self.fc3(x))
         x = self.fc4(x)
         return x
 
@@ -121,8 +52,7 @@ def load_data(file_path='processed_data/combined_solar_weather_data.csv'):
     
     # Prepare features (X) and target (y)
     features = ['max_temp', 'min_temp', 'precipitation', 'rain', 
-               'snowfall', 'cloud_cover', 'solar_radiation',
-               'daylight_hours']
+               'snowfall', 'cloud_cover', 'solar_radiation']
     X = df[features].values
     y = df['total'].values  # Predict total energy production
     
@@ -133,147 +63,84 @@ def load_data(file_path='processed_data/combined_solar_weather_data.csv'):
     
     return X, y, features
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, target_val_loss=0.01, max_restarts=500):
-    best_overall_loss = float('inf')
-    best_overall_diff = float('inf')  # Track loss difference
-    best_overall_model = None
-    restarts = 0
+def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device):
+    train_losses = []
+    val_losses = []
+    best_val_loss = float('inf')
+    best_model = None
+    patience = 1000
+    patience_counter = 0
     
-    while restarts < max_restarts:
-        print(f"\nTraining attempt {restarts + 1}/{max_restarts}")
-        
-        # Reset model if not first attempt
-        if restarts > 0:
-            print("Reinitializing model with new random weights...")
-            model = SolarNet(model.fc1.in_features).to(device)
-            optimizer = torch.optim.AdamW(model.parameters(), lr=0.0005, weight_decay=0.01)
-            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=500, verbose=True, min_lr=1e-6)
-        
-        train_losses = []
-        val_losses = []
-        best_val_loss = float('inf')
-        best_loss_diff = float('inf')
-        best_model = None
-        patience = 1000
-        patience_counter = 0
-        no_improvement_epochs = 0
-        
-        for epoch in range(num_epochs):
-            # Training phase
-            model.train()
-            train_loss = 0
-            for batch_X, batch_y in train_loader:
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                optimizer.zero_grad()
-                outputs = model(batch_X)
-                loss = criterion(outputs, batch_y.unsqueeze(1))
-                
-                # Check for NaN loss
-                if math.isnan(loss.item()):
-                    print("NaN loss detected, skipping batch")
-                    continue
-                    
-                loss.backward()
-                
-                # Gradient clipping to prevent exploding gradients
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                
-                optimizer.step()
-                train_loss += loss.item()
+    for epoch in range(num_epochs):
+        # Training phase
+        model.train()
+        train_loss = 0
+        for batch_X, batch_y in train_loader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             
-            # Validation phase
-            model.eval()
-            val_loss = 0
-            with torch.no_grad():
-                for batch_X, batch_y in val_loader:
-                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                    outputs = model(batch_X, eval_mode=True)
-                    val_loss += criterion(outputs, batch_y.unsqueeze(1)).item()
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y.unsqueeze(1))
             
-            train_loss /= len(train_loader)
-            val_loss /= len(val_loader)
-            
-            # Calculate loss difference
-            loss_diff = abs(train_loss - val_loss)
-            
-            # Skip if loss is NaN
-            if math.isnan(train_loss) or math.isnan(val_loss):
-                print(f"NaN loss detected in epoch {epoch+1}, skipping...")
+            # Check for NaN loss
+            if math.isnan(loss.item()):
+                print("NaN loss detected, skipping batch")
                 continue
+                
+            loss.backward()
             
-            train_losses.append(train_loss)
-            val_losses.append(val_loss)
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
-            # Print progress with loss difference
-            print(f'Epoch {epoch+1}/{num_epochs}:')
-            print(f'Training Loss: {train_loss:.4f}')
-            print(f'Validation Loss: {val_loss:.4f}')
-            print(f'Loss Difference: {loss_diff:.4f}')
-            
-            # Learning rate scheduling
-            scheduler.step(val_loss)
-            
-            # Modified early stopping logic
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_loss_diff = loss_diff
-                best_model = model.state_dict().copy()
-                patience_counter = 0
-                no_improvement_epochs = 0
-            elif loss_diff < best_loss_diff and val_loss < best_val_loss * 1.1:
-                # Accept slightly worse val_loss if loss difference improves significantly
-                best_val_loss = val_loss
-                best_loss_diff = loss_diff
-                best_model = model.state_dict().copy()
-                patience_counter = 0
-                no_improvement_epochs = 0
-            else:
-                patience_counter += 1
-                no_improvement_epochs += 1
-            
-            # Check if we've met both targets
-            if val_loss <= target_val_loss and loss_diff <= 0.001:  # Target 0.1% difference
-                print(f"\nBoth targets achieved! Val Loss: {val_loss:.4f}, Diff: {loss_diff:.4f}")
-                return {
-                    'model_state': best_model,
-                    'train_losses': train_losses,
-                    'val_losses': val_losses,
-                    'final_train_loss': train_loss,
-                    'best_val_loss': best_val_loss,
-                    'best_loss_diff': best_loss_diff
-                }
-            
-            # Check if we're stuck
-            if no_improvement_epochs >= 100:  # No improvement in 100 epochs
-                print("\nTraining stuck, trying new initialization...")
-                break
-            
-            # Early stopping
-            if patience_counter >= patience:
-                print(f"Early stopping triggered after {epoch+1} epochs")
-                break
+            optimizer.step()
+            train_loss += loss.item()
         
-        # Update best overall model considering both metrics
-        current_score = best_val_loss + best_loss_diff  # Combined score
-        best_score = best_overall_loss + best_overall_diff
-        if current_score < best_score:
-            best_overall_loss = best_val_loss
-            best_overall_diff = best_loss_diff
-            best_overall_model = best_model
+        # Validation phase
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for batch_X, batch_y in val_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                outputs = model(batch_X, eval_mode=True)
+                val_loss += criterion(outputs, batch_y.unsqueeze(1)).item()
         
-        restarts += 1
-        print(f"Best validation loss this attempt: {best_val_loss:.6f}")
-        print(f"Best loss difference this attempt: {best_loss_diff:.6f}")
+        train_loss /= len(train_loader)
+        val_loss /= len(val_loader)
+        
+        # Skip if loss is NaN
+        if math.isnan(train_loss) or math.isnan(val_loss):
+            print(f"NaN loss detected in epoch {epoch+1}, skipping...")
+            continue
+        
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+        
+        # Print progress
+        print(f'Epoch {epoch+1}/{num_epochs}:')
+        print(f'Training Loss: {train_loss:.4f}')
+        print(f'Validation Loss: {val_loss:.4f}')
+        
+        # Learning rate scheduling
+        scheduler.step(val_loss)
+        
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_model = model.state_dict().copy()
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            
+        # Early stopping
+        if patience_counter >= patience:
+            print(f"Early stopping triggered after {epoch+1} epochs")
+            break
     
-    print("\nMax restarts reached. Using best model found.")
-    return {
-        'model_state': best_overall_model,
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'final_train_loss': train_loss,
-        'best_val_loss': best_overall_loss,
-        'best_loss_diff': best_overall_diff
-    }
+    if best_model is None:
+        print("Warning: No valid model state was saved. Using current model state.")
+        best_model = model.state_dict().copy()
+    
+    return best_model, train_losses, val_losses
 
 def calculate_feature_importance(model, X_train, feature_names, device):
     model.eval()
@@ -288,6 +155,7 @@ def calculate_feature_importance(model, X_train, feature_names, device):
     for i in range(X_train.shape[1]):
         X_modified = X_baseline.clone()
         X_modified[:, i] = 0  # Zero out the feature
+        
         with torch.no_grad():
             modified_pred = model(X_modified, eval_mode=True)
             
@@ -302,44 +170,6 @@ def calculate_feature_importance(model, X_train, feature_names, device):
     }).sort_values('Importance', ascending=False)
     
     return feature_importance
-
-def save_model_version(model_metrics, version_file='model_versions.json'):
-    """Save model version with performance metrics"""
-    version_file = os.path.join(MODEL_DIR, version_file)
-    try:
-        with open(version_file, 'r') as f:
-            versions = json.load(f)
-    except FileNotFoundError:
-        versions = []
-    
-    # Convert numpy types to native Python types
-    metrics = {
-        'mae': float(model_metrics['mae']),
-        'rmse': float(model_metrics['rmse']),
-        'val_loss': float(model_metrics['val_loss']),
-        'train_loss': float(model_metrics['train_loss'])
-    }
-    
-    # Create new version entry
-    version = {
-        'version': len(versions) + 1,
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'mae': metrics['mae'],
-        'rmse': metrics['rmse'],
-        'val_loss': metrics['val_loss'],
-        'train_loss': metrics['train_loss'],
-        'model_file': f'solar_prediction_model_v{len(versions) + 1}.pth',
-        'feature_scaler': f'feature_scaler_v{len(versions) + 1}.joblib',
-        'target_scaler': f'target_scaler_v{len(versions) + 1}.joblib'
-    }
-    
-    versions.append(version)
-    
-    # Save version history
-    with open(version_file, 'w') as f:
-        json.dump(versions, f, indent=4)
-    
-    return version
 
 def train_and_evaluate():
     # Set device (GPU if available, else CPU)
@@ -367,47 +197,27 @@ def train_and_evaluate():
     train_dataset = SolarDataset(X_train_scaled, y_train)
     val_dataset = SolarDataset(X_val_scaled, y_val)
     test_dataset = SolarDataset(X_test_scaled, y_test)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32)
-    test_loader = DataLoader(test_dataset, batch_size=32)
+    
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=16)
+    test_loader = DataLoader(test_dataset, batch_size=16)
     
     # Initialize model with smaller learning rate
     model = SolarNet(X_train.shape[1]).to(device)
     
     # Define loss function and optimizer with weight decay
     criterion = nn.MSELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0005, weight_decay=0.01)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-6)
     
-    # Adjusted optimization parameters for balanced training
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=0.0006,  # Lower learning rate for stability
-        weight_decay=0.002,  # Increased regularization
-        betas=(0.9, 0.99),  # Modified beta2 for better momentum
-        eps=1e-8
-    )
-    
-    scheduler = ReduceLROnPlateau(
-        optimizer,
-        mode='min',
-        factor=0.95,  # Very gradual reduction
-        patience=500,  # More patience
-        verbose=True,
-        min_lr=1e-7
-    )
-    
-    # Training with focus on loss difference
-    training_results = train_model(
+    # Train the model
+    best_model_state, train_losses, val_losses = train_model(
         model, train_loader, val_loader, criterion, optimizer, scheduler,
-        num_epochs=50000,
-        device=device,
-        target_val_loss=0.005,
-        max_restarts=20
+        num_epochs=200000, device=device
     )
     
     # Load best model
-    model.load_state_dict(training_results['model_state'])
-    train_losses = training_results['train_losses']
-    val_losses = training_results['val_losses']
+    model.load_state_dict(best_model_state)
     
     # Evaluate on test set
     model.eval()
@@ -438,7 +248,7 @@ def train_and_evaluate():
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig(os.path.join(TRAINING_DIR, 'training_history.png'))
+    plt.savefig('training_history.png')
     plt.close()
     
     # Plot actual vs predicted values
@@ -448,38 +258,57 @@ def train_and_evaluate():
     plt.xlabel('Actual Energy Production (kWh)')
     plt.ylabel('Predicted Energy Production (kWh)')
     plt.title('Actual vs Predicted Solar Energy Production')
-    plt.savefig(os.path.join(TRAINING_DIR, 'prediction_scatter.png'))
+    plt.savefig('prediction_scatter.png')
     plt.close()
     
-    # Calculate metrics with correct loss values
-    metrics = {
-        'mae': mae,
-        'rmse': rmse,
-        'val_loss': training_results['best_val_loss'],
-        'train_loss': training_results['final_train_loss']
-    }
-    
-    # Save version information
-    version = save_model_version(metrics)
-    print(f"\nSaving model version {version['version']}:")
-    print(f"MAE: {version['mae']:.2f} kWh")
-    print(f"RMSE: {version['rmse']:.2f} kWh")
-    print(f"Validation Loss: {version['val_loss']:.4f}")
-    print(f"Training Loss: {version['train_loss']:.4f}")
-    
-    # Save model with version number and convert numpy types
-    model_path = os.path.join(MODEL_DIR, version['model_file'])
+    # Get next version number
+    version_file = os.path.join(MODEL_DIR, 'model_versions.json')
+    try:
+        with open(version_file, 'r') as f:
+            versions = json.load(f)
+        next_version = max(v['version'] for v in versions) + 1
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        versions = []
+        next_version = 1
+
+    # Generate filenames
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    model_filename = f'model_v{next_version}.pth'
+    feature_scaler_filename = f'feature_scaler_v{next_version}.joblib'
+    target_scaler_filename = f'target_scaler_v{next_version}.joblib'
+
+    # Save model and scalers in models directory
     torch.save({
-        'model_state_dict': training_results['model_state'],
-        'input_size': int(X_train.shape[1]),
-        'feature_names': feature_names,
-        'version': version['version'],
-        'metrics': numpy_to_python(metrics)  # Convert numpy types to Python types
-    }, model_path)
+        'model_state_dict': best_model_state,
+        'input_size': X_train.shape[1],
+        'feature_names': feature_names
+    }, os.path.join(MODEL_DIR, model_filename))
     
-    joblib.dump(scaler, os.path.join(MODEL_DIR, version['feature_scaler']))
-    joblib.dump(y_scaler, os.path.join(MODEL_DIR, version['target_scaler']))
-    
+    joblib.dump(scaler, os.path.join(MODEL_DIR, feature_scaler_filename))
+    joblib.dump(y_scaler, os.path.join(MODEL_DIR, target_scaler_filename))
+
+    # Update version tracking with native Python types
+    version_info = {
+        'version': next_version,
+        'timestamp': timestamp,
+        'mae': float(mae),  # Convert numpy.float32 to Python float
+        'rmse': float(rmse),
+        'val_loss': float(min(val_losses)),
+        'train_loss': float(min(train_losses)),
+        'model_file': model_filename,
+        'feature_scaler': feature_scaler_filename,
+        'target_scaler': target_scaler_filename
+    }
+    versions.append(version_info)
+
+    # Save version info
+    with open(version_file, 'w') as f:
+        json.dump(versions, f, indent=4)
+
+    print(f"\nModel saved as version {next_version}")
+    print(f"MAE: {mae:.2f} kWh")
+    print(f"RMSE: {rmse:.2f} kWh")
+
     # Calculate feature importance
     feature_importance = calculate_feature_importance(model, X_train_scaled, feature_names, device)
     print("\nFeature Importance:")
@@ -491,7 +320,7 @@ def train_and_evaluate():
     plt.xticks(rotation=45)
     plt.title('Feature Importance')
     plt.tight_layout()
-    plt.savefig(os.path.join(TRAINING_DIR, 'feature_importance.png'))
+    plt.savefig('feature_importance.png')
     plt.close()
     
     return model, scaler, y_scaler
