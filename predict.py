@@ -30,7 +30,7 @@ class SolarNet(nn.Module):
         return x
 
 def get_radiation_forecast(lat=61.7273, lon=17.1066):
-    """Get UV index forecast from OpenMeteo"""
+    """Get UV index forecast from OpenMeteo and convert to estimated solar radiation (MJ/m²)."""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         'latitude': lat,
@@ -347,7 +347,6 @@ def predict_solar_output():
             print(f"Snowfall: {weather_data[4]:.1f}mm")
             print(f"Cloud Cover: {weather_data[5]:.0f}%")
             print(f"Solar Radiation: {weather_data[6]:.2f} MJ/m²")
-            print(f"Daylight Hours: {weather_data[7]:.2f}h")
             return prediction
         else:
             print("Could not fetch weather forecast data from SMHI")
